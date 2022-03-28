@@ -11,7 +11,7 @@ module Mem
 
 using ..AMDGPU
 using ..AMDGPU.HSA
-import AMDGPU: check, get_region, AGENTS
+import AMDGPU: check, get_region, get_memory_pool, AGENTS
 
 ## buffer type
 
@@ -222,8 +222,13 @@ function alloc(agent::HSAAgent, bytesize::Integer; coherent=false)
         :coarsegrained
     end
 
-    region = get_region(agent, region_kind)
-    check(HSA.memory_allocate(region, bytesize, ptr_ref))
+    if region_kind != :coarsegrained
+        region = get_region(agent, region_kind)
+        check(HSA.memory_allocate(region.region, bytesize, ptr_ref))
+    else
+        pool = AMDGPU.get_memory_pool(agent, region_kind)
+        check(HSA.amd_memory_pool_allocate(pool.pool, bytesize, 0, ptr_ref))
+    end
     ptr = ptr_ref[]
     # On AMD this is a no-op and we need to make sure that we use the right region instead.
     # if region_kind == :coarsegrained
@@ -235,7 +240,11 @@ alloc(bytesize; kwargs...) = alloc(get_default_agent(), bytesize; kwargs...)
 
 function free(buf::Buffer)
     if buf.ptr != C_NULL
-        check(HSA.memory_free(buf.ptr))
+        if buf.coherent
+            check(HSA.memory_free(buf.ptr))
+        else
+            check(HSA.amd_memory_pool_free(buf.ptr))
+        end
     end
     return
 end
